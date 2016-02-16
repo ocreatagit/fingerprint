@@ -11,33 +11,46 @@ class FingerprintController extends \BaseController {
 //
         $data = $this->get_logs("192.168.100.30");
         if (count($data) > 0) {
-            $data = $data[0];
-            $MJ03 = DB::table('mj03')
-                    ->where('idkar', $data['PIN'])
-                    ->first();
-            $TA01 = DB::table('ta01')
-                    ->where('tglabs', date("Y-m-d"))
-                    ->where('idjk', $MJ03->idjk)
-                    ->first();
-            if ($TA01 == null) {
-                $MJ02 = DB::table('mj02')
+            try {
+                DB::beginTransaction();
+                $data = $data[0];
+                $MJ03 = DB::table('mj03')
+                        ->where('idkar', $data['PIN'])
+                        ->first();
+                $TA01 = DB::table('ta01')
+                        ->where('tglabs', date("Y-m-d"))
                         ->where('idjk', $MJ03->idjk)
                         ->first();
-                $sql = "SELECT AUTO_INCREMENT as idabs FROM information_schema.tables WHERE  TABLE_SCHEMA = 'absensi' AND TABLE_NAME = 'ta01'";
-                $TA01 = DB::select(DB::raw($sql));
-                $TA01 = $TA01[0];
-                DB::table('ta01')->insert(
-                        array('tglabs' => date("Y-m-d"),
-                            'tipe' => $MJ02->tipe,
-                            'idjk' => $MJ03->idjk)
-                );
+                if ($TA01 == null) {
+                    $MJ02 = DB::table('mj02')
+                            ->where('idjk', $MJ03->idjk)
+                            ->first();
+                    $sql = "SELECT AUTO_INCREMENT as idabs FROM information_schema.tables WHERE  TABLE_SCHEMA = 'absensi' AND TABLE_NAME = 'ta01'";
+                    $TA01 = DB::select(DB::raw($sql));
+                    $TA01 = $TA01[0];
+                    DB::table('ta01')->insert(
+                            array('tglabs' => date("Y-m-d"),
+                                'tipe' => $MJ02->tipe,
+                                'idjk' => $MJ03->idjk)
+                    );
+                }
+                $absen = DB::table('ta02')
+                        ->where('idkar', $data['PIN'])
+                        ->where('abscd', $data['Status'])
+                        ->whereDate('tglmsk', '=', strftime("%Y-%m-%d", strtotime($data['DateTime'])))
+                        ->first();
+                if($absen) {
+                    DB::table('ta02')->insert(
+                            array('idabs' => $TA01->idabs,
+                                'idkar' => $data['PIN'],
+                                'tglmsk' => $data['DateTime'],
+                                'abscd' => $data['Status'])
+                    );
+                }
+                DB::commit();
+            } catch (Exception $e) {
+                DB::rollback();
             }
-            DB::table('ta02')->insert(
-                    array('idabs' => $TA01->idabs,
-                        'idkar' => $data['PIN'],
-                        'tglmsk' => $data['DateTime'],
-                        'abscd' => $data['Status'])
-            );
         }
         return View::make('finger', $data);
     }
@@ -47,7 +60,7 @@ class FingerprintController extends \BaseController {
         try {
             $Connect = fsockopen($IP, "80", $errno, $errstr, 1);
         } catch (Exception $e) {
-            print_r('koneksi gagal');
+            print_r('Fingerprint Belum tersambung');
             exit;
         }
         if ($Connect) {
