@@ -8,94 +8,138 @@ class FingerprintController extends \BaseController {
      * @return Response
      */
     public function index() {
+        return View::make('finger');
+    }
+
+    public function getData() {
 //
         $data = $this->get_logs("192.168.100.30");
-        if (count($data) > 0) {
-            try {
-                DB::beginTransaction();
-                $data = $data[0];
-                $MJ03 = DB::table('mj03')
-                        ->where('idkar', $data['PIN'])
-                        ->first();
-                $TA01 = DB::table('ta01')
-                        ->where('tglabs', date("Y-m-d"))
-                        ->where('idjk', $MJ03->idjk)
-                        ->first();
-                if ($TA01 == null) {
-                    $MJ02 = DB::table('mj02')
+        if (is_array($data) or ( $data instanceof Traversable)) {
+            if (count($data) > 0) {
+                try {
+                    DB::beginTransaction();
+                    date_default_timezone_set('Asia/Jakarta');
+                    $date = Date('Y-m-d H:i:s');
+                    $data = $data[0];
+                    $MJ03 = DB::table('mj03')
+                            ->where('idkar', $data['PIN'])
+                            ->first();
+                    $TA01 = DB::table('ta01')
+                            ->where('tglabs', date("Y-m-d"))
                             ->where('idjk', $MJ03->idjk)
                             ->first();
-                    $sql = "SELECT AUTO_INCREMENT as idabs FROM information_schema.tables WHERE  TABLE_SCHEMA = 'absensi' AND TABLE_NAME = 'ta01'";
-                    $TA01 = DB::select(DB::raw($sql));
-                    $TA01 = $TA01[0];
-                    DB::table('ta01')->insert(
-                            array('tglabs' => date("Y-m-d"),
-                                'tipe' => $MJ02->tipe,
-                                'idjk' => $MJ03->idjk)
+                    if ($TA01 == null) {
+                        $MJ02 = DB::table('mj02')
+                                ->where('idjk', $MJ03->idjk)
+                                ->first();
+                        $sql = "SELECT AUTO_INCREMENT as idabs FROM information_schema.tables WHERE  TABLE_SCHEMA = 'absensi' AND TABLE_NAME = 'ta01'";
+                        $TA01 = DB::select(DB::raw($sql));
+                        $TA01 = $TA01[0];
+                        DB::table('ta01')->insert(
+                                array('tglabs' => date("Y-m-d"),
+                                    'tipe' => $MJ02->tipe,
+                                    'idjk' => $MJ03->idjk,
+                                    'created_at' => $date,
+                                    'updated_at' => $date)
+                        );
+                    }
+                    $absen = DB::table('ta02')
+                            ->where('idkar', $data['PIN'])
+                            ->where('abscd', $data['Status'])
+                            ->whereDate('tglmsk', '=', strftime("%Y-%m-%d", strtotime($data['DateTime'])))
+                            ->first();
+                    if (!$absen) {
+                        DB::table('ta02')->insert(
+                                array('idabs' => $TA01->idabs,
+                                    'idkar' => $data['PIN'],
+                                    'tglmsk' => $data['DateTime'],
+                                    'abscd' => $data['Status'],
+                                    'created_at' => $date,
+                                    'updated_at' => $date)
+                        );
+                    }
+                    DB::commit();
+                    $sql = "SELECT mk01.idkar, 
+                               mk01.nama, 
+                               DATE_FORMAT(ta02.tglmsk, '%H:%i') as jammsk, 
+                               ta02.abscd,
+                               mk01.pic,
+                               CAST(TIME_TO_SEC(TIMEDIFF(DATE_FORMAT(ta02.tglmsk, '%H:%i'), DATE_FORMAT(mj02.jmmsk, '%H:%i')))/60 as integer) as lbt 
+                               FROM ta02
+                        INNER JOIN mk01 on mk01.idkar = ta02.idkar
+                        INNER JOIN mj03 ON mj03.idkar = ta02.idkar
+                        INNER JOIN mj02 ON mj02.idjk = mj03.idjk
+                        ORDER BY ta02.tglmsk DESC LIMIT 1";
+                    $return = array(
+                        'status' => TRUE,
+                        'hasData' => TRUE,
+                        'content' => DB::select(DB::raw($sql))
+                    );
+                } catch (Exception $e) {
+                    DB::rollback();
+                    $return = array(
+                        'status' => TRUE,
+                        'hasData' => FALSE
                     );
                 }
-                $absen = DB::table('ta02')
-                        ->where('idkar', $data['PIN'])
-                        ->where('abscd', $data['Status'])
-                        ->whereDate('tglmsk', '=', strftime("%Y-%m-%d", strtotime($data['DateTime'])))
-                        ->first();
-                if($absen) {
-                    DB::table('ta02')->insert(
-                            array('idabs' => $TA01->idabs,
-                                'idkar' => $data['PIN'],
-                                'tglmsk' => $data['DateTime'],
-                                'abscd' => $data['Status'])
-                    );
-                }
-                DB::commit();
-            } catch (Exception $e) {
-                DB::rollback();
+            } else {
+                $return = array(
+                    'status' => TRUE,
+                    'hasData' => FALSE
+                );
             }
+        } else {
+            $return = array(
+                'status' => FALSE
+            );
         }
-        return View::make('finger', $data);
+        echo json_encode($return);
     }
 
     public function get_logs($IP) {
         $logs = array();
         try {
             $Connect = fsockopen($IP, "80", $errno, $errstr, 1);
-        } catch (Exception $e) {
-            print_r('Fingerprint Belum tersambung');
-            exit;
-        }
-        if ($Connect) {
-            $soap_request = "<GetAttLog>
+            if ($Connect) {
+                $soap_request = "<GetAttLog>
                             <ArgComKey xsi:type=\"xsd:integer\">0</ArgComKey>
                             <Arg>
                             <PIN xsi:type=\"xsd:integer\">ALL</PIN>
                             </Arg>
                             </GetAttLog>";
-            $newLine = "\r\n";
-            fputs($Connect, "POST /iWsService HTTP/1.0" . $newLine);
-            fputs($Connect, "Content-Type: text/xml" . $newLine);
-            fputs($Connect, "Content-Length: " . strlen($soap_request) . $newLine . $newLine);
-            fputs($Connect, $soap_request . $newLine);
-            $buffer = "";
-            while ($Response = fgets($Connect, 1024)) {
-                $buffer = $buffer . $Response;
+                $newLine = "\r\n";
+                fputs($Connect, "POST /iWsService HTTP/1.0" . $newLine);
+                fputs($Connect, "Content-Type: text/xml" . $newLine);
+                fputs($Connect, "Content-Length: " . strlen($soap_request) . $newLine . $newLine);
+                fputs($Connect, $soap_request . $newLine);
+                $buffer = "";
+                while ($Response = fgets($Connect, 1024)) {
+                    $buffer = $buffer . $Response;
+                }
+                $this->clear_log($IP);
             }
-            $this->clear_log($IP);
-        }
-        $buffer = $this->Parse_Data($buffer, "<GetAttLogResponse>", "</GetAttLogResponse>");
+            $buffer = $this->Parse_Data($buffer, "<GetAttLogResponse>", "</GetAttLogResponse>");
 
-        $buffer = explode("\r\n", $buffer);
-        for ($a = 0; $a < count($buffer); $a++) {
-            $data = $this->Parse_Data($buffer[$a], "<Row>", "</Row>");
-            $log = array();
-            $log['PIN'] = $this->Parse_Data($data, "<PIN>", "</PIN>");
-            $log['DateTime'] = $this->Parse_Data($data, "<DateTime>", "</DateTime>");
-            $log['Verified'] = $this->Parse_Data($data, "<Verified>", "</Verified>");
-            $log['Status'] = $this->Parse_Data($data, "<Status>", "</Status>");
-            array_push($logs, $log);
+            $buffer = explode("\r\n", $buffer);
+            for ($a = 0; $a < count($buffer); $a++) {
+                $data = $this->Parse_Data($buffer[$a], "<Row>", "</Row>");
+                $log = array();
+                $log['PIN'] = $this->Parse_Data($data, "<PIN>", "</PIN>");
+                $log['DateTime'] = $this->Parse_Data($data, "<DateTime>", "</DateTime>");
+                $log['Verified'] = $this->Parse_Data($data, "<Verified>", "</Verified>");
+                $log['Status'] = $this->Parse_Data($data, "<Status>", "</Status>");
+                array_push($logs, $log);
+            }
+            array_shift($logs);
+            array_pop($logs);
+//            $return = array(
+//                "count" => count($logs) == 0 ? false : true,
+//                "logs" => $logs
+//            );
+            return $logs;
+        } catch (Exception $e) {
+            return 'disconnect';
         }
-        array_shift($logs);
-        array_pop($logs);
-        return $logs;
     }
 
     function clear_log($IP) {
@@ -133,6 +177,11 @@ class FingerprintController extends \BaseController {
             }
         }
         return $hasil;
+    }
+
+    public function getTimeServer() {
+        date_default_timezone_set('Asia/Jakarta');
+        echo date('H:i:s');
     }
 
 }

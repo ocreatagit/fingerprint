@@ -11,9 +11,6 @@
 |
 */
 
-Route::get('/', function()
-{
-	return View::make('hello');
-});
-
-Route::get('coba', 'FingerprintController@index' );
+Route::get('/', 'FingerprintController@index');
+Route::get('getData', 'FingerprintController@getData');
+Route::get('getTimeServer', 'FingerprintController@getTimeServer');
