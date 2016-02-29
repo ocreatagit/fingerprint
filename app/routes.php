@@ -11,6 +11,6 @@
 |
 */
 
-Route::get('/', 'FingerprintController@index');
+Route::get('/', 'FingerprintController@getData');
 Route::get('getData', 'FingerprintController@getData');
 Route::get('getTimeServer', 'FingerprintController@getTimeServer');
