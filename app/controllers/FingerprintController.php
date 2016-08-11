@@ -20,6 +20,7 @@ class FingerprintController extends \BaseController {
                 date_default_timezone_set('Asia/Jakarta');
                 $date = Date('Y-m-d H:i:s');
                 $day = strtolower(Date('D'));
+                $time = Date('H:i:s');
                 
                 if($day != "sat" && $day != "sun"){
                     $day = "mon-fri";
@@ -28,39 +29,47 @@ class FingerprintController extends \BaseController {
                 $data = $data[0];
 
                 $TJ01 = DB::table('tj01')
-                        ->where('tglabs', date("Y-m-d"))
+                        ->where('tgl', date("Y-m-d"))
                         ->first();
+
                 if ($TJ01 == NULL) {
                     $sql = "SELECT SUM(jam1) as jam1, SUM(jam2) as jam2
                             FROM (
                                     (SELECT mj02.idjk as jam1, 0 as jam2 FROM mj02
                                  INNER JOIN mj03 on mj02.idjk = mj03.mj02_id
-                                 WHERE mj02.tipe = 1 AND mj02.jmmsk >= '" . $date . "' AND mj03.mk01_id = " . $data['PIN'] . " AND mj02.day = '".$day."' AND mj02.status = 'Y' LIMIT 1)
+                                 WHERE mj02.tipe = 1 AND mj02.jmmsk >= '" . $time . "' AND mj03.mk01_id = " . $data['PIN'] . " AND ( mj02.day = '".$day."' OR mj02.day = 'all' ) AND mj02.status = 'Y' ORDER BY mj02.jmmsk ASC LIMIT 1)
                                     UNION
                                     (SELECT 0 as jam1, mj02.idjk as jam2 FROM mj02
                                      INNER JOIN mj03 on mj02.idjk = mj03.mj02_id
-                                     WHERE mj02.tipe = 1 AND mj03.mk01_id = " . $data['PIN'] . " AND mj02.day = '".$day."' AND mj02.status = 'Y' ORDER BY mj02.jmmsk DESC LIMIT 1)) as tabel1";
+                                     WHERE mj02.tipe = 1 AND mj03.mk01_id = " . $data['PIN'] . " AND ( mj02.day = '".$day."' OR mj02.day = 'all' ) AND mj02.status = 'Y' ORDER BY mj02.jmmsk DESC LIMIT 1)) as tabel1";
                     $IDJK = DB::select(DB::raw($sql));
+                    dd($sql);
                     $IDJK = $IDJK[0];
+                    $IDJK = ($IDJK->jam1 == 0 ? $IDJK->jam2 : $IDJK->jam1);
                     DB::table('tj01')->insert(
-                            array('mj02_id' => ($IDJK[0] == 0 ? $IDJK[1] : $IDJK[0]),
+                            array('mj02_id' => $IDJK,
                                 'mk01_id' => $data['PIN'],
                                 'tgl' => $date,
                                 'created_at' => $date,
                                 'updated_at' => $date)
                     );
+
                     $TJ01 = DB::table('tj01')
-                        ->where('tglabs', date("Y-m-d"))
+                        ->where('tgl', date("Y-m-d"))
                         ->first();
+                }else{
+                    $IDJK = $TJ01->mj02_id;
                 }
+
 
                 $TA01 = DB::table('ta01')
                         ->where('tglabs', date("Y-m-d"))
-                        ->where('idjk', $TJ01->mj02_id)
+                        ->where('idjk', $IDJK)
                         ->first();
+
                 if ($TA01 == null) {
                     $MJ02 = DB::table('mj02')
-                            ->where('idjk', $TJ01->mj02_id)
+                            ->where('idjk', $IDJK)
                             ->first();
                     $sql = "SELECT AUTO_INCREMENT as idabs FROM information_schema.tables WHERE  TABLE_SCHEMA = 'absensi' AND TABLE_NAME = 'ta01'";
                     $TA01 = DB::select(DB::raw($sql));
@@ -68,10 +77,11 @@ class FingerprintController extends \BaseController {
                     DB::table('ta01')->insert(
                             array('tglabs' => date("Y-m-d"),
                                 'tipe' => $MJ02->tipe,
-                                'idjk' => $TJ01->mj02_id,
+                                'idjk' => $IDJK,
                                 'created_at' => $date,
                                 'updated_at' => $date)
                     );
+
                 }
                 $absen = DB::table('ta02')
                         ->where('mk01_id', $data['PIN'])
@@ -79,7 +89,8 @@ class FingerprintController extends \BaseController {
                         ->where('ta01_id', $TA01->idabs)
                         ->whereDate('tglmsk', '=', strftime("%Y-%m-%d", strtotime($data['DateTime'])))
                         ->first();
-                if (!$absen) {
+
+                if ($absen == null) {                    
                     DB::table('ta02')->insert(
                             array('ta01_id' => $TA01->idabs,
                                 'mk01_id' => $data['PIN'],
@@ -89,6 +100,7 @@ class FingerprintController extends \BaseController {
                                 'updated_at' => $date)
                     );
                 }
+
                 DB::commit();
             } catch (Exception $e) {
                 DB::rollback();
